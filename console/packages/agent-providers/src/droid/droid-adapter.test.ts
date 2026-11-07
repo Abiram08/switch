@@ -54,19 +54,27 @@ it('passes the Factory API key through from the machine', () => {
 });
 
 it('reads the sign-in from the doctor without starting one', () => {
-  const check = (name: string, status: string) =>
+  const doctor = (status: string) =>
     JSON.stringify({
-      checks: [
-        { name: 'network', status: 'pass' },
-        { name, status },
+      results: [
+        { id: 'auth.credentials', status: 'pass' },
+        { id: 'auth.verify', status },
       ],
     });
-  expect(parseDroidDoctor(check('auth', 'pass')).status).toBe('authenticated');
-  expect(parseDroidDoctor(check('Authentication', 'fail')).status).toBe('unauthenticated');
-  expect(parseDroidDoctor('You are not logged in.').status).toBe('unauthenticated');
-  expect(parseDroidDoctor('{"checks":[]}').status).toBe('unknown');
+  expect(parseDroidDoctor(doctor('pass')).status).toBe('authenticated');
+  expect(parseDroidDoctor(doctor('warn')).status).toBe('unauthenticated');
+  expect(parseDroidDoctor(doctor('fail')).status).toBe('unauthenticated');
+  expect(parseDroidDoctor(doctor('warn')).message).toContain('droid');
+  expect(parseDroidDoctor('{"results":[]}').status).toBe('unknown');
+  expect(parseDroidDoctor('not json').status).toBe('unknown');
   expect(parseDroidDoctor('').status).toBe('unknown');
-  expect(parseDroidDoctor(check('auth', 'fail')).message).toContain('droid');
+});
+
+it('authenticates with the API key method only when a key is given', () => {
+  expect(droidAcp.authMethodId?.({ FACTORY_API_KEY: 'fk-synthetic' }, 'droid')).toBe(
+    'factory-api-key'
+  );
+  expect(droidAcp.authMethodId?.({}, 'droid')).toBeUndefined();
 });
 
 it('takes a Factory API key as signing the CLI in', async () => {

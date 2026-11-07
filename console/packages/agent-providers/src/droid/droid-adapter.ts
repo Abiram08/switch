@@ -6,46 +6,26 @@ import { execProvider } from '../provider-process';
 import { commandOutput, readiness, signInWith, type ProviderReadiness } from '../readiness';
 
 export const DROID_LOGIN = 'droid';
-const SIGNED_OUT =
-  /not (?:logged|signed) in|not authenticated|unauthenticated|login required|authentication required|no api key/i;
-const PASSED = new Set(['pass', 'passed', 'ok', 'success', 'true']);
-const FAILED = new Set(['fail', 'failed', 'error', 'false']);
+const AUTH_CHECK = 'auth.verify';
 
-/** The status of the first check in `value` whose name mentions auth. */
-function authStatus(value: unknown): string | undefined {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = authStatus(item);
-      if (found) return found;
-    }
-    return undefined;
-  }
-  if (value === null || typeof value !== 'object') return undefined;
-  const record = value as Record<string, unknown>;
-  const name = [record.name, record.id, record.check].find((v) => typeof v === 'string');
-  const status = [record.status, record.result, record.ok, record.passed]
-    .find((v) => typeof v === 'string' || typeof v === 'boolean')
-    ?.toString()
-    .toLowerCase();
-  if (typeof name === 'string' && /auth/i.test(name) && status) return status;
-  for (const child of Object.values(record)) {
-    const found = authStatus(child);
-    if (found) return found;
-  }
-  return undefined;
+interface DoctorCheck {
+  id?: string;
+  status?: string;
 }
 
 /** Reads `droid doctor --checks auth --json`, which reports sign-in without starting one. */
 export function parseDroidDoctor(output: string): ProviderReadiness {
-  if (SIGNED_OUT.test(output)) return readiness('unauthenticated', signInWith(DROID_LOGIN));
-  let status: string | undefined;
+  let checks: DoctorCheck[] = [];
   try {
-    status = authStatus(JSON.parse(output));
+    const parsed = JSON.parse(output) as { results?: DoctorCheck[] };
+    if (Array.isArray(parsed.results)) checks = parsed.results;
   } catch {
-    status = undefined;
+    checks = [];
   }
-  if (status && PASSED.has(status)) return readiness('authenticated', 'Signed in.');
-  if (status && FAILED.has(status)) return readiness('unauthenticated', signInWith(DROID_LOGIN));
+  const status = checks.find((check) => check.id === AUTH_CHECK)?.status;
+  if (status === 'pass') return readiness('authenticated', 'Signed in.');
+  if (status === 'warn' || status === 'fail')
+    return readiness('unauthenticated', signInWith(DROID_LOGIN));
   return readiness(
     'unknown',
     'Could not verify authentication. Check provider setup and try again.'
@@ -93,6 +73,7 @@ export const droidAcp: AcpProviderHooks = {
   }),
   loginCommand: DROID_LOGIN,
   inheritEnv: ['FACTORY_API_KEY'],
+  authMethodId: (env) => (env.FACTORY_API_KEY?.trim() ? 'factory-api-key' : undefined),
   checkSignIn: async ({ binaryPath, cwd, env }) => {
     // The doctor passes a key without using it, so a key is taken as given and
     // a bad one fails the first turn.
